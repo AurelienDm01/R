@@ -1,0 +1,810 @@
+library(dplyr)
+library(ggplot2)
+library(e1071) 
+#install.packages("cvar")
+library(cvar)
+#install.packages("goft")
+library(goft)
+#install.packages("EnvStats")
+library(EnvStats)
+library(npreg)
+###### ------------------------------- Importation des donnees
+
+
+
+setwd(dir="D:/Documents/ESILV/A4/S8/Stat Val ext/Projet")
+
+base = read.csv2("insurance.csv", sep=",")
+
+
+###### ------------------------------ resume des donnees
+
+resume = function(base){
+  
+  cat("\n \n")
+  print("------------------------------------ DIMENSIONS : ")
+  
+  print("nbr de lignes : ")
+  print(nrow(base)) # nb de lignes
+  print("nbr de colonnes : ")
+  print(ncol(base)) # nb de colonnes
+  cat("\n \n")
+  print("------------------------------------ VARIABLES : ")
+  print(t(t(sapply(base,class)))) # nom des variables
+  cat("\n \n")
+  print("------------------------------------ DESCRIPTION : ")
+  print(summary(base)) # stats descriptives
+  print("------------------------------------ HEAD : ")
+  print(head(base))
+  
+  
+  
+}
+
+###### ----------------------------- nettoyage des donnees 
+
+nettoyage = function(base){
+  
+  # nombre valeur manquantes  
+  for (var in colnames(base)){
+    print(paste('Nbr de valeurs manquantes de',var,":",sum(is.na(base[var]))))
+  }
+  
+  # suppression de doublons 
+  a = nrow(base)
+  base = distinct(base)
+  b = nrow(base)
+  c = a-b
+  print(paste('Nbr de valeurs supprim?es :', c))
+  
+  #conversion en format approprie
+  base = type.convert(base)
+  
+  #traitement des incoherences intra - variables
+  
+  
+  
+  return(base)
+  
+}
+
+
+base = nettoyage(base)
+resume(base)
+
+
+###### ------------- Etude de la variable charges
+
+Moyenne = mean(base$charges)
+Moyenne
+
+Variance = var(base$charges)
+Variance
+
+EcartType = sqrt(Variance)
+EcartType
+
+# Histogram with density plot
+ggplot(base, aes(x=charges)) + 
+  geom_histogram(aes(y=..density..), bins = 70,colour="black", fill="skyblue")+
+  geom_density(alpha=.2, fill="red") 
+
+
+
+
+###### ------------- Kurtosis
+
+kurtosis(base$charges)
+# le kurtosis est positif (1,586874) donc la courbe est leptokurtique
+
+
+
+
+
+###### ------------- Value at Risk
+#https://maung-sutikno.medium.com/value-at-risk-var-in-r-programming-language-2c28cc92fbc2
+# chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/http://www.aui.ma/sse-capstone-repository/pdf/spring-2018/AN%20R%20IMPLEMENTATION%20TO%20FINANCIAL%20RISK%20MEASURING%20USING%20VALUE%20AT%20RISK.pdf
+
+#install.packages("PerformanceAnalytics")
+library(PerformanceAnalytics)
+
+#VaR(base$charges,p=0.95)# marche pas
+#VaR(base$charges,p=0.99)# marche pas 
+
+## autre méthode avec qunatile : https://stackoverflow.com/questions/37622617/historical-simulation-var-in-r-var-calculation-produces-unreliable-result-risk
+
+VAR95 = quantile(base$charges,c(.05,.95)) # on trouve une VaR de 41210,05
+VAR99 = quantile(base$charges,c(.01,.99)) # VaR = 48537.797 
+VAR975 = quantile(base$charges,c(.025,.975)) # VaR = 46013.389 
+VAR98 = quantile(base$charges,c(.02,.98))
+VAR985 = quantile(base$charges,c(.015,.985))
+VAR995 = quantile(base$charges,c(.005,.995))
+
+ggplot(base, aes(x=charges)) + 
+  geom_histogram(aes(y=..density..), bins = 70,colour="black", fill="skyblue")+
+  geom_density(alpha=.2, fill="red") +
+  geom_vline(aes(xintercept=VAR95[2]),color="red", linetype="dashed", size=1)
+
+        
+###### ------------- Expected shortfall
+
+#chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://cran.r-project.org/web/packages/cvar/cvar.pdf
+
+###TROUVER DIST LOI POUR FAIRE ES
+
+### Loi normale ?
+hist(log(base$charges),breaks=100) 
+plot(density(log(base$charges)))
+mu = mean(log(base$charges))
+sig = sd(log(base$charges))
+
+plot(density(log(base$charges)))
+curve(dnorm(x,mu,sig), lwd = 3, col = "red", add = TRUE) 
+
+plot(ecdf(log(base$charges)), main = "fdr de la charge")
+curve(pnorm(x,mu,sig),add=TRUE, col="red")
+
+plot(qnorm(ppoints(log(base$charges))), sort(log(base$charges)))
+curve(mu+sig*x, -6, 6, col = "red", add = TRUE)
+
+boxplot(log(base$charges)) # symetrie d'une loi normale
+
+
+
+shapiro.test(log(base$charges)) ### p value < 0,05 on rejette l'hypothèse nulle
+lnorm_test(base$charges)
+
+# ce n'est pas une loi normale 
+
+#### Loi gamma ???
+
+
+hist(base$charges,breaks=100) 
+plot(density(base$charges))
+
+#https://search.r-project.org/CRAN/refmans/EnvStats/html/egamma.html
+
+egamma(base$charges, ci = TRUE) # estimation des paramètres
+alpha = 1.41245
+beta = 9401.47975
+
+plot(density(base$charges))
+curve(dgamma(x,shape = alpha,scale = beta), lwd = 3, col = "red", add = TRUE)
+
+gamma_test(base$charges) ### p value <0,05 ce n'est à priori pas non plus une loi Gamma
+
+
+
+#### Test : en supprimant les valeurs extreme cad charges > 32 000
+
+
+
+Test =  subset(base, base$charges < 32000)
+
+hist(Test$charges,breaks=100) 
+plot(density(Test$charges))
+
+#https://search.r-project.org/CRAN/refmans/EnvStats/html/egamma.html
+
+test = egamma(Test$charges, ci = TRUE) # estimation des paramètres
+alpha2 = test[[3]][[1]] #1.890267
+beta2 = test[[3]][[2]] #5321.138274
+
+plot(density(Test$charges))
+curve(dgamma(x,shape = alpha2,scale = beta2), lwd = 3, col = "red", add = TRUE)
+
+gamma_test(Test$charges) #pvalue > 0,05
+
+
+# Lorsque l'on fait une troncature de notre BDD c'est à dire lorsque l'on exclut les valeur extremes (charges > 35 000)
+# La variable charge suit une loi gamma car pvalue > 0,05. H0 = l'observation suit une loi de gamma, on accepte donc 
+# l'hypothèse nulle. 
+
+
+
+
+distrib = dgamma(base$charges,shape = alpha,scale = beta)
+ExpectedShortfall = ES(distrib,p_loss=0.05)
+ExpectedShortfall
+
+# Autre méthode plus ghetto : https://www.youtube.com/watch?v=WJg3LOrFzEo&ab_channel=Vardeez
+# Pour un ES au niveau de confiance 95% on va faire la moyenne des VAR dont le niveau de conf est > 95%
+
+ESTest = (VAR975[2]+VAR98[2]+VAR985[2]+VAR99[2]+VAR995[2])/5
+ESTest # double check à la main le calcul est bon. 
+
+
+###### ------------- Tail Value at Risk
+
+
+### différence entre TVAR et ES ???  Dans le cas continu ES = TVAR
+
+#install.packages("actuar")
+library(actuar)
+
+CTE(base$charges,conf.level=c(0.9,0.95,0.99))
+
+
+###### ------------- Implémentation Cours 2 modélisation NON Paramétrique : Kernel & Spline
+
+#install.packages("ElemStatLearn")
+
+# Gaussian
+
+plot(y=base$charges,x=base$bmi,col=1,main=' ',xlab='')
+lines(ksmooth(base$bmi,base$charges,"normal",bandwidth = 1),col=3)
+lines(ksmooth(base$bmi,base$charges,"normal",bandwidth = 1.5),col=4)
+lines(ksmooth(base$bmi,base$charges,"normal",bandwidth = 2),col=5)
+lines(ksmooth(base$bmi,base$charges,"normal",bandwidth = 2.5),col=6)
+lines(ksmooth(base$bmi,base$charges,"normal",bandwidth = 3),col=7)
+legend("topleft",paste("h=",c(1,1.5,2,2.5,3)),col=3:7,lty=1)
+
+plot(y=base$charges,x=base$age,col=1,main=' ',xlab='')
+lines(ksmooth(base$age,base$charges,"normal",bandwidth = 1),col=3)
+lines(ksmooth(base$age,base$charges,"normal",bandwidth = 1.5),col=4)
+lines(ksmooth(base$age,base$charges,"normal",bandwidth = 2),col=5)
+lines(ksmooth(base$age,base$charges,"normal",bandwidth = 2.5),col=6)
+lines(ksmooth(base$age,base$charges,"normal",bandwidth = 3),col=7)
+legend("topleft",paste("h=",c(1,1.5,2,2.5,3)),col=3:7,lty=1)
+
+ggplot(data = base,aes(x =bmi, y = charges)) +
+  geom_point(aes(color=factor(smoker))) 
+# Epanechnikov fonctionne pas 
+
+#install.packages("extremefit")
+library(extremefit)
+plot(base$bmi,Epa.kernel(base$charges))
+
+
+## Kernel pour la densité 
+plot(base$charges,sype="l")
+hist(base$charges)
+lines(density(base$charges),col="darkgreen")
+
+#install.packages("ISLR")
+library(ISLR)
+
+vec <- pretty(20:7000,7)
+hist(base$charges,breaks=vec,freq=FALSE)
+polygon(density(base$charges),col="pink",border="blue")
+
+
+rug(base$charges,col="brown")
+
+
+
+hist(base$charges,probability=T)
+ptx<- seq(min(base$charges),max(base$charges),length=100)
+density_charges=density(base$charges)
+plot(density_charges,main='estimateur à noyau par défaut')
+lines(ptx,dnorm(ptx,mean=mean(base$charges),sd=sd(base$charges)),lty=3)
+
+
+plot(density(base$charges),col=1,main='Estimateurs a noyau',xlab='')
+lines(density(base$charges,bw=10),col=2);lines(density(base$charges,bw=15),col=3)
+legend("topleft",paste("h=",c(22.73,10,15)),col=1:3,lty=1)
+
+
+plot(density(base$charges),col=1,main='Estimateurs a noyau',xlab='')
+lines(density(base$charges,bw=30),col=2);lines(density(base$charges,bw=50),col=3)
+legend("topleft",paste("h=",c(22.73,30,50)),col=1:3,lty=1)
+
+x11()par(mfrow=c(2,3))
+
+hist(base$charges)
+plot(density(base$charges,kernel='gaus',),main='N. Gaussian')
+plot(density(base$charges,kernel='rec',),main='N. uniforme')
+plot(density(base$charges,kernel='tri',),main='N. triangulaire')
+plot(density(base$charges,kernel='cos'),main='N. cosinus')
+plot(density(base$charges,kernel='bi',),main='N.biweight')
+plot(density(base$charges,kernel='epa',),main='N. Epanechnikov')
+
+
+
+# IMPLEMENTATION DE LA PROF
+mod=loess(y~x)
+print(mod)
+
+yfit=predict(mod, ne=x)
+
+###### ------------- Smoothing Spline
+
+plot(base$bmi,base$charges,pch=20)
+lines(smooth.spline(base$bmi,base$charges,spar=1),col=2)
+lines(smooth.spline(base$bmi,base$charges,spar=0.5),col=3)
+lines(smooth.spline(base$bmi,base$charges,spar=0.75),col=4)
+legend("topleft",paste("𝛌=",c(1,0.5,0.75)),col=2:4,lty=1)
+
+spline_model1 <- ss(base$bmi, base$charges, spar = 1)
+summary(spline_model1)
+spline_model2 <- ss(base$bmi, base$charges, spar = 0.5)
+summary(spline_model1)
+spline_model3 <- ss(base$bmi, base$charges, spar = 0.75)
+summary(spline_model1)
+
+
+plot(base$age,base$charges,pch=20)
+lines(smooth.spline(base$age,base$charges,spar=1),col=2)
+lines(smooth.spline(base$age,base$charges,spar=0.5),col=3)
+lines(smooth.spline(base$age,base$charges,spar=0.75),col=4)
+legend("topleft",paste("𝛌=",c(1,0.5,0.75)),col=2:4,lty=1)
+
+
+
+# cubic spline
+#http://users.stat.umn.edu/~helwig/notes/smooth-spline-notes.html
+
+#install.packages("npreg")
+library(npreg)
+
+cubspline = ss(base$charges, base$bmi,  m = 2)
+plot(cubspline, ylim = c(15, 55))
+points(base$charges,base$bmi)
+lines(smooth.spline(base$charges,base$bmi,spar=0.75),col="blue") ### En gris cubic Smoothing spline et en bleu méthode normale
+
+cubspline = ss(base$bmi, base$charges,  m = 2)
+plot(cubspline, ylim = c(0, 60000))
+points(base$bmi,base$charges)
+lines(smooth.spline(base$bmi,base$charges,spar=0.75),col="blue")
+
+###### ------------- Regression linéaire simple
+
+#https://delladata.fr/la-regression-lineaire-simple-avec-le-logiciel-r/#:~:text=Une%20p%2Dvalue%20inf%C3%A9rieure%20%C3%A0,la%20relation%20lin%C3%A9aire%20est%20d%C3%A9croissante.
+#https://bookdown.org/AODiakite/r4econometrics/simple-lm.html
+
+regsimple = lm(base$charges ~ base$bmi  , data=base)
+summary(regsimple) # Rsquared assez faible, pvalue < 0,05 on rejette l'hypothèse nulle 
+
+#install.packages("ggpmisc")
+library(ggpmisc)
+
+ggplot(data = base,aes(x =bmi, y = charges)) +
+   stat_poly_eq()+
+  geom_point() +geom_smooth(method = "lm")
+
+####Graph des résidus
+
+X = base$bmi
+residuals_ = regsimple$residuals
+ggplot(data = NULL) + geom_point(aes(x = X,y =residuals_)) +
+  geom_abline(slope = 0, intercept = 0, color = 'red',size = 1)
+
+hist(residuals_)
+qqnorm(residuals_)
+qqline(residuals_)
+
+
+# Les indices choisis au hasard
+echantillon = sample(1:498)[1:50]
+# Echantillon du bmi
+X_residuals = X[echantillon]
+# echentillon des charges
+y = base$charges[echantillon]
+# les y estimes correspondants a l'echantillon
+y_hat = regsimple$fitted.values[echantillon]
+
+# Representation de l'echantillon 
+ggplot()+ 
+  # nuage de points
+  geom_point(data = base,aes(x =bmi, y = charges),alpha =0.4) +
+  # droite de regression
+  geom_smooth(data = base,aes(x =bmi, y = charges), method = 'lm') +
+  # echantillon de y
+  geom_point(aes( x= X_residuals, y = y), color ='red', size = 2,) +
+  #les erreurs
+  geom_segment(aes(x = X_residuals, y = y_hat, xend = X_residuals, yend = y),color = 'red')
+
+# On voit très clairemnt que la regression linéaire simple n'est pas adaptée au modèle
+
+###### ------------- RL miltivariée
+
+
+ggplot(base, aes(x=bmi, y=charges,color=factor(smoker))) +
+  stat_poly_eq()+
+  scale_color_manual(values = c("no" = "red",
+                                "yes"="blue")) +
+  geom_point() + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(base, aes(x=age, y=charges,color=factor(smoker))) +
+  scale_color_manual(values = c("no" = "red",
+                                "yes"="blue")) +
+  stat_poly_eq()+
+  geom_point()+
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ggplot(base, aes(x=bmi, y=charges,color=factor(smoker))) +
+  scale_color_manual(values = c("no" = "red",
+                                "yes"="blue")) +
+  geom_point() 
+###### -------------GEV
+
+#install.packages('gumbel')
+library(gumbel)
+#install.packages("ordinal")
+library(ordinal)
+
+lmathou=list()
+max=0
+
+Nombre = 12
+
+for (i in c(1:nrow(base))){
+  
+  
+  
+  if(i%%Nombre==0){
+    
+    if(base$charges[i]>max){
+      max = base$charges[i]
+    }
+    
+    lmathou[i/Nombre] <- max
+    max=0
+    
+  } 
+  else{
+    if(base$charges[i]>max){
+      max = base$charges[i]
+    }
+    
+  }
+  
+}
+lmathou=unlist(lmathou)
+lmathou
+
+lmathou = as.data.frame((lmathou))
+lmathoubis <- nettoyage(lmathou)
+
+
+GEV = as.numeric(unlist(lmathoubis))
+
+
+
+
+B =eevd(GEV,method="mle")
+position = B[[3]][[1]] 
+echelle = B[[3]][[2]] 
+
+
+gevfunction <- function(x,a,b) {
+  Fonction <- exp(-exp(-((x-b)/a)))
+  return(Fonction)
+}
+
+
+plot(density(GEV))
+curve(dgumbel(x, position, echelle), lwd = 3, col = "red", add = TRUE)
+
+
+hist(base$charges)
+hist(GEV,add=TRUE, col="red")
+
+df = data.frame(charge = GEV)
+ggplot(df, aes(x=charge)) + 
+  geom_histogram(aes(y=..density..), bins = 70,colour="black", fill="skyblue")+
+  geom_density(alpha=.2, fill="red") 
+
+#install.packages("gnFit")
+
+
+
+# Méthode qui fait tout
+
+MethodeDesBlockMaxima = function(NumberOfElements){
+  lmathou=list()
+  max=0
+  NumberOfElements=11
+  for (i in c(1:nrow(base))){
+    
+    if(i%%NumberOfElements==0){
+      
+      if(base$charges[i]>max){
+        max = base$charges[i]
+      }
+      
+      lmathou[i/NumberOfElements] <- max
+      max=0
+      
+    } 
+    else{
+      if(base$charges[i]>max){
+        max = base$charges[i]
+      }
+      
+    }
+    
+  }
+  lmathou=unlist(lmathou)
+  lmathou
+  
+  lmathou = as.data.frame((lmathou))
+  lmathoubis <- nettoyage(lmathou)
+  
+  
+  GEV = as.numeric(unlist(lmathoubis))
+  
+  B=eevd(GEV,method="mle")
+  position = B[[3]][[1]]
+  echelle = B[[3]][[2]]
+  
+  
+  gevfunction <- function(x,a,b) {
+    Fonction <- exp(-exp(-((x-b)/a)))
+    return(Fonction)
+  }
+  
+  plot(density(GEV))
+  curve(dgumbel(x,position,echelle), lwd = 3, col = "red", add = TRUE)
+  
+  hist(base$charges)
+  hist(GEV,add=TRUE,col="red")
+}
+
+
+###### ------------- Copule
+
+#install.packages("copula")
+library(copula)
+#install.packages("QRM")
+library(QRM)
+
+# https://datascienceplus.com/modelling-dependence-with-copulas/
+# chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://cran.r-project.org/web/packages/copula/copula.pdf
+# chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://cran.r-project.org/web/packages/QRM/QRM.pdf
+
+plot(base$bmi,base$charges,pch=20)
+abline(lm(base$charges~base$bmi),col='red',lwd=1)
+cor(base$bmi,base$charges,method='spearman') # très faible corrélation avec coef de spearman (0,1196)
+
+# On va déterminer quelle copule choisir avec la librairie VineCopule
+
+#install.packages("VineCopula")
+library(VineCopula)
+
+u <- pobs(as.matrix(cbind(base$bmi,base$charges)))[,1]
+v <- pobs(as.matrix(cbind(base$bmi,base$charges)))[,2]
+
+selectedCopula <- BiCopSelect(u,v,familyset=NA)
+selectedCopula # survival BB7 copula 
+
+par1= selectedCopula$par # les param donnés par la fonction
+par2 = selectedCopula$par2
+
+# Double check parameters
+
+#install.packages("VC2copula")
+library(VC2copula)
+
+t.cop <- BB7Copula(param=c(par1,par2)) # trouver copule bb7
+set.seed(500)
+m <- pobs(as.matrix(cbind(base$bmi,base$charges)))
+fit <- fitCopula(t.cop,m,method='ml')
+coef(fit) # param légèrement différents
+
+paramfit1= 1.11197407
+paramfit2 = 0.05382564
+
+rho <- coef(fit)[1]
+df <- coef(fit)[2]
+persp(BB7Copula(param=c(rho,df)) ,dCopula,zlim = c(0, 2))
+
+u <- rCopula(50000,BB7Copula(param=c(rho,df)))
+plot(u[,1],u[,2],pch='.',col='blue')
+cor(u,method='spearman')
+
+#install.packages("rgl")
+library(rgl)
+plot3d(u[,1],u[,2],u[,3],pch=20,col='navyblue')
+
+
+## dépendance de queue
+
+#install.packages("ismev")
+
+HoeffdingD(base$bmi, base$charges, upper.tail = TRUE)
+
+
+
+# Simulated data
+
+charges_mu <- mean(base$charges)
+charges_sd <- sd(base$charges)
+bmi_mu <- mean(base$bmi)
+bmi_sd <- sd(base$bmi)
+
+copula_dist <- mvdc(copula=VC2copula::BB7Copula(param=c(rho,df)), margins=c("norm","norm"),
+                    paramMargins=list(list(mean=charges_mu, sd=charges_sd),
+                                      list(mean=bmi_mu, sd=bmi_sd)))
+sim <- rMvdc(copula_dist, 3965)
+
+
+################ avec l'age
+
+
+u2 <- pobs(as.matrix(cbind(base$age,base$charges)))[,1]
+v2 <- pobs(as.matrix(cbind(base$age,base$charges)))[,2]
+
+selectedCopula2 <- BiCopSelect(u2,v2,familyset=NA)
+selectedCopula2 #  Rotated Tawn type 1 180 degrees
+
+par11= selectedCopula$par # les param donnés par la fonction
+par22 = selectedCopula$par2
+
+# Double check parameters
+
+#install.packages("VC2copula")
+library(VC2copula)
+
+myCopula <- tawnT1Copula(param=c(par11, par22)) # trouver copule bb7
+set.seed(500)
+myRotatedCopula <- rotCopula(myCopula, flip=c(TRUE,TRUE))
+m2 <- pobs(as.matrix(cbind(base$bmi,base$charges)))
+fit <- fitCopula(t.cop,m,method='ml')
+coef(fit) # param légèrement différents
+
+paramfit1= 1.11197407
+paramfit2 = 0.05382564
+
+rho <- coef(fit)[1]
+df <- coef(fit)[2]
+persp(BB7Copula(param=c(rho,df)) ,dCopula,zlim = c(0, 2))
+
+u <- rCopula(50000,BB7Copula(param=c(rho,df)))
+plot(u[,1],u[,2],pch='.',col='blue')
+cor(u,method='spearman')
+
+#install.packages("rgl")
+library(rgl)
+plot3d(u[,1],u[,2],u[,3],pch=20,col='navyblue')
+
+
+### dépendance de queue   
+
+###### ------------- Isolation des fumeur
+
+basesmoker = subset(base, smoker=="yes")
+
+#spline
+
+plot(basesmoker$bmi,basesmoker$charges,pch=20)
+lines(smooth.spline(basesmoker$bmi,basesmoker$charges,spar=1),col=2)
+lines(smooth.spline(basesmoker$bmi,basesmoker$charges,spar=0.5),col=3)
+lines(smooth.spline(basesmoker$bmi,basesmoker$charges,spar=0.75),col=4)
+legend("topleft",paste("𝛌=",c(1,0.5,0.75)),col=2:4,lty=1)
+
+spline_modelA <- ss(basesmoker$bmi,basesmoker$charges, spar = 1)
+summary(spline_modelA)# R² = 0.6492
+spline_modelB <- ss(basesmoker$bmi,basesmoker$charges, spar = 0.5)
+summary(spline_modelB)# R² = 0,7001
+spline_modelC <- ss(basesmoker$bmi,basesmoker$charges, spar = 0.75)
+summary(spline_modelC)# R² = 0.6515
+
+plot(basesmoker$age,basesmoker$charges,pch=20)
+lines(smooth.spline(basesmoker$age,basesmoker$charges,spar=1),col=2)
+lines(smooth.spline(basesmoker$age,basesmoker$charges,spar=0.5),col=3)
+lines(smooth.spline(basesmoker$age,basesmoker$charges,spar=0.75),col=4)
+legend("topleft",paste("𝛌=",c(1,0.5,0.75)),col=2:4,lty=1)
+
+spline_modelD <- ss(basesmoker$age,basesmoker$charges, spar = 1)
+summary(spline_modelD)# R² = 0.6492
+spline_modelE <- ss(basesmoker$age,basesmoker$charges, spar = 0.5)
+summary(spline_modelE)# R² = 0,7001
+spline_modelF <- ss(basesmoker$age,basesmoker$charges, spar = 0.75)
+summary(spline_modelF)# R² = 0.6515
+
+
+cubspline2 = ss(basesmoker$bmi, basesmoker$charges,  m = 2)
+plot(cubspline2, ylim = c(0, 65000))
+points(basesmoker$bmi,basesmoker$charges, pch=20)
+lines(smooth.spline(basesmoker$bmi,basesmoker$charges,spar=0.5),col="blue")
+summary(cubspline2)
+# kernel 
+
+plot(y=basesmoker$charges,x=basesmoker$bmi,col=1,main=' ',xlab='',pch=20)
+lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 1),col=2)
+#lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 1.5),col=4)
+lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 2),col=3)
+#lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 2.5),col=6)
+lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 3),col=4)
+legend("topleft",paste("h=",c(1,2,3)),col=2:4,lty=1)
+
+plot(y=basesmoker$charges,x=basesmoker$age,col=1,main=' ',xlab='',pch=20)
+lines(ksmooth(basesmoker$age,basesmoker$charges,"normal",bandwidth = 1),col=2)
+#lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 1.5),col=4)
+lines(ksmooth(basesmoker$age,basesmoker$charges,"normal",bandwidth = 2),col=3)
+#lines(ksmooth(basesmoker$bmi,basesmoker$charges,"normal",bandwidth = 2.5),col=6)
+lines(ksmooth(basesmoker$age,basesmoker$charges,"normal",bandwidth = 3),col=4)
+legend("topleft",paste("h=",c(1,2,3)),col=2:4,lty=1)
+
+### Régression polynomiale
+
+
+
+ggplot(basesmoker, aes(x=bmi, y=charges)) +
+  geom_point() + 
+  geom_smooth(method=lm, formula = y~x+I(x^2))
+
+ggplot(basesmoker, aes(x=bmi, y=charges)) +
+  geom_point() + 
+  geom_smooth(method=lm, formula = y~x+I(x^2)+I(x^3))
+
+mod3 <- lm(charges~bmi+I(bmi^2)+I(bmi^3), data=basesmoker)
+summary(mod3) # R² = 0.6961
+
+
+# Ajustement
+
+mod2 <- lm(charges~bmi+I(bmi^2), data=basesmoker)
+summary(mod2) # R² = 0.6603
+
+ggplot(base, aes(x=bmi, y=charges)) +
+  stat_poly_eq()+
+  geom_point() + 
+  geom_smooth(method=lm, formula = y~x+I(x^2))
+
+basenonsmoker = subset(base, smoker=="no")
+
+ggplot(basenonsmoker, aes(x=bmi, y=charges)) +
+  geom_point() + 
+  geom_smooth(method=lm, formula = y~x+I(x^2))
+
+mod <- lm(charges~bmi+I(bmi^2), data=basenonsmoker)
+summary(mod)
+
+#########""" GAM
+
+ggplot(basesmoker, aes(x=charges)) + 
+  geom_histogram(aes(y=..density..), bins = 70,colour="black", fill="skyblue")+
+  geom_density(alpha=.2, fill="red") 
+
+ggplot(basenonsmoker, aes(x=charges)) + 
+  geom_histogram(aes(y=..density..), bins = 70,colour="black", fill="skyblue")+
+  geom_density(alpha=.2, fill="red") 
+
+
+
+
+regsimple2 = lm(base$charges ~ base$age  , data=base)
+summary(regsimple2) # Rsquared assez faible, pvalue < 0,05 on rejette l'hypothèse nulle 
+
+#install.packages("ggpmisc")
+library(ggpmisc)
+
+ggplot(data = base,aes(x =age, y = charges)) +
+  stat_poly_eq()+
+  geom_point() +geom_smooth(method = "lm")
+
+####Graph des résidus
+
+X2 = base$age
+residuals_2 = regsimple2$residuals
+ggplot(data = NULL) + geom_point(aes(x = X2,y =residuals_2)) +
+  geom_abline(slope = 0, intercept = 0, color = 'red',size = 1)
+
+hist(residuals2_)
+qqnorm(residuals_2)
+qqline(residuals_2)
+
+
+# Les indices choisis au hasard
+echantillon2 = sample(1:498)[1:50]
+# Echantillon du bmi
+X_residuals2 = X2[echantillon2]
+# echentillon des charges
+y2 = base$charges[echantillon2]
+# les y estimes correspondants a l'echantillon
+y_hat2 = regsimple2$fitted.values[echantillon2]
+
+# Representation de l'echantillon 
+ggplot()+ 
+  # nuage de points
+  geom_point(data = base,aes(x =age, y = charges),alpha =0.4) +
+  # droite de regression
+  geom_smooth(data = base,aes(x =age, y = charges), method = 'lm') +
+  # echantillon de y
+  geom_point(aes( x= X_residuals2, y = y2), color ='red', size = 2,) +
+  #les erreurs
+  geom_segment(aes(x = X_residuals2, y = y_hat2, xend = X_residuals2, yend = y2),color = 'red')
+
